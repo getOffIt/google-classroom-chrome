@@ -69,7 +69,7 @@ def prepare_profile(profile: Path) -> None:
     preferences_path.chmod(0o600)
 
 
-def auto_login(profile: Path) -> int:
+def auto_login(profile: Path, *, non_interactive=False, session_only=False, expected_email=None, native_keychain=False) -> int:
     """Attempt Google's standard email/password flow once, without retries."""
     credentials_path = Path(__file__).with_name("credentials.json")
     try:
@@ -89,13 +89,17 @@ def auto_login(profile: Path) -> int:
     with sync_playwright() as playwright:
         context = playwright.chromium.launch_persistent_context(
             str(profile), channel="chrome", headless=False, chromium_sandbox=True,
+            ignore_default_args=["--use-mock-keychain", "--password-store=basic"] if native_keychain else None,
         )
         try:
             page = context.pages[0] if context.pages else context.new_page()
             page.goto(START_URL, wait_until="domcontentloaded")
+            result = 2
             stage = "opening Classroom"
             try:
                 # Only submit credentials to Google's own sign-in origin.
+                if session_only and urlparse(page.url).hostname == "accounts.google.com":
+                    raise ValueError("Saved session requires re-authentication.")
                 if urlparse(page.url).hostname == "accounts.google.com":
                     if "accountchooser" in urlparse(page.url).path:
                         stage = "selecting the configured account"
@@ -126,19 +130,24 @@ def auto_login(profile: Path) -> int:
                     output = Path(__file__).with_name(".artifacts")
                     output.mkdir(exist_ok=True, mode=0o700)
                     page.screenshot(path=str(output / "classroom.png"))
-                print("Classroom opened. Check that the expected account is selected.")
+                if expected_email:
+                    identity = page.locator(f'[aria-label*="{expected_email}"], [title*="{expected_email}"]')
+                    identity.first.wait_for(state="visible", timeout=10000)
+                    print("Expected account identity verified.")
+                result = 0
+                print("Classroom opened.")
             except (PlaywrightTimeout, ValueError):
                 print(f"Stopped while {stage}.")
                 body = page.locator("body").inner_text()
                 print(f"Page: {urlparse(page.url).hostname}{urlparse(page.url).path}")
-                safe_body = body.replace(password, "[password redacted]").replace(email, "[email redacted]")
-                print("Visible page text: " + safe_body[:6000])
                 if "browser or app may not be secure" in body.lower():
                     print("Google rejected this automated browser as insecure.")
                 elif "verify" in body.lower() or "verification" in body.lower():
                     print("Google is showing a verification step.")
                 print("Automatic sign-in did not finish. Check Chrome for account selection, verification, or a sign-in error.")
-            input("Press Enter here when finished to close this Chrome window: ")
+            if not non_interactive:
+                input("Press Enter here when finished to close this Chrome window: ")
+            return result
         finally:
             try:
                 context.close()
@@ -150,6 +159,10 @@ def auto_login(profile: Path) -> int:
 
 def main() -> int:
     parser = argparse.ArgumentParser(description=__doc__)
+    parser.add_argument("--native-keychain", action="store_true", help="Use native macOS Keychain, matching OpenClaw Chrome")
+    parser.add_argument("--non-interactive", action="store_true", help="Close after checking; return nonzero if authentication or identity fails")
+    parser.add_argument("--session-only", action="store_true", help="Check saved session without submitting credentials")
+    parser.add_argument("--expected-email", help="Require matching visible Google account identity")
     parser.add_argument("--diagnose", action="store_true", help="Save a local screenshot after Classroom loads")
     login_options = parser.add_mutually_exclusive_group()
     login_options.add_argument("--auto-login", dest="auto_login", action="store_true", help="Attempt sign-in using local credentials.json (default)")
@@ -192,7 +205,7 @@ def main() -> int:
         print(f"Could not prepare Chrome profile: {error}", file=sys.stderr)
         return 1
     if args.auto_login:
-        return auto_login(profile)
+        return auto_login(profile, non_interactive=args.non_interactive, session_only=args.session_only, expected_email=args.expected_email, native_keychain=args.native_keychain)
     try:
         # Launch ordinary Chrome so Google sign-in runs in a normal browser.
         subprocess.Popen(

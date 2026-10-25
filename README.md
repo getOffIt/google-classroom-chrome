@@ -56,3 +56,29 @@ Neither mode reads assignments.
 Credentials, browser profiles, virtual environments, screenshots, and diagnostic
 artifacts must stay local. Only the blank credentials example is included.
 This script currently opens Classroom; it does not extract homework or submit work.
+
+## OpenClaw integration
+
+`--non-interactive` closes the browser after checking and returns a nonzero exit
+code when authentication or account verification fails. `--session-only` avoids
+submitting credentials. `--expected-email` requires a matching visible account
+identity. `--native-keychain` uses the native macOS Keychain rather than
+Playwright's mock Keychain and basic password store.
+
+Stop the dedicated browser profile through OpenClaw before running this script
+against it. Configure the account and profile path locally, for example:
+
+```sh
+.venv/bin/python classroom.py --non-interactive --native-keychain \
+  --expected-email "$CLASSROOM_EMAIL" \
+  --profile-dir "$CLASSROOM_PROFILE_DIR"
+```
+
+Reopen the same dedicated profile in OpenClaw afterward and verify the account
+and class. Do not run concurrently with other browser tasks. Stop on verification
+or authentication challenges rather than repeatedly retrying sign-in. Add
+`--session-only` to check saved-session reuse without submitting credentials.
+The script does not change homework state.
+
+Keep screenshots from `--diagnose` private; they may contain account and class
+information. They are excluded from Git along with credentials and local artifacts.
