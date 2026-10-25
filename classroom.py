@@ -88,7 +88,7 @@ def auto_login(profile: Path) -> int:
 
     with sync_playwright() as playwright:
         context = playwright.chromium.launch_persistent_context(
-            str(profile), channel="chrome", headless=False,
+            str(profile), channel="chrome", headless=False, chromium_sandbox=True,
         )
         try:
             page = context.pages[0] if context.pages else context.new_page()
