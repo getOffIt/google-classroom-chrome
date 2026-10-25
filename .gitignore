@@ -1,0 +1,21 @@
+__pycache__/
+.venv/
+.DS_Store
+credentials.json
+.artifacts/
+
+# Keep local secrets, browser state, and diagnostics out of Git.
+.env
+.env.*
+!.env.example
+credentials.*
+!credentials.example.json
+*.log
+*.png
+*.jpg
+*.jpeg
+*.har
+*.zip
+profiles/
+user-data/
+.local/
