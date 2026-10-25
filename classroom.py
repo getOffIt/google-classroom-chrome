@@ -15,6 +15,31 @@ from urllib.parse import urlparse
 START_URL = "https://classroom.google.com/h/st"
 
 
+def account_paths(account=None):
+    if account and not re.fullmatch(r"[a-z0-9][a-z0-9_-]{0,63}", account):
+        raise ValueError("Account names must contain lowercase letters, digits, underscores or hyphens.")
+    root = Path(__file__).resolve().parent
+    if account:
+        return (root / ".local" / "accounts" / f"{account}.json",
+                Path.home() / "Library/Application Support/Classroom Chrome Accounts" / account)
+    return root / "credentials.json", Path.home() / "Library/Application Support/Classroom Chrome"
+
+
+def load_credentials(path, session_only=False):
+    if session_only and not path.exists():
+        return {}
+    try:
+        data = json.loads(path.read_text())
+        if not isinstance(data, dict):
+            raise ValueError
+        for key in (["email"] if session_only else ["email", "password"]):
+            if not isinstance(data.get(key), str) or not data[key].strip():
+                raise ValueError
+        return data
+    except (OSError, ValueError):
+        raise ValueError("Set email and password in the selected local credentials file as one JSON object.") from None
+
+
 def close_profile_browser(profile: Path) -> None:
     """Gracefully stop only the Chrome process owning this profile's lock."""
     lock = profile / "SingletonLock"
@@ -69,17 +94,10 @@ def prepare_profile(profile: Path) -> None:
     preferences_path.chmod(0o600)
 
 
-def auto_login(profile: Path, *, non_interactive=False, session_only=False, expected_email=None, native_keychain=False) -> int:
+def auto_login(profile: Path, *, credentials=None, non_interactive=False, session_only=False, expected_email=None, native_keychain=False) -> int:
     """Attempt Google's standard email/password flow once, without retries."""
-    credentials_path = Path(__file__).with_name("credentials.json")
-    try:
-        credentials = json.loads(credentials_path.read_text())
-        email, password = credentials["email"], credentials["password"]
-        if not isinstance(email, str) or not isinstance(password, str) or not email or not password:
-            raise ValueError
-    except (OSError, ValueError, KeyError, TypeError):
-        print("Fill in email and password in credentials.json first.", file=sys.stderr)
-        return 1
+    credentials = credentials or {}
+    email, password = credentials.get("email", ""), credentials.get("password", "")
     try:
         from playwright.sync_api import sync_playwright, TimeoutError as PlaywrightTimeout, Error as PlaywrightError
     except ImportError:
@@ -131,7 +149,8 @@ def auto_login(profile: Path, *, non_interactive=False, session_only=False, expe
                     output.mkdir(exist_ok=True, mode=0o700)
                     page.screenshot(path=str(output / "classroom.png"))
                 if expected_email:
-                    identity = page.locator(f'[aria-label*="{expected_email}"], [title*="{expected_email}"]')
+                    quoted_email = json.dumps(expected_email)
+                    identity = page.locator(f'[aria-label*={quoted_email}], [title*={quoted_email}]')
                     identity.first.wait_for(state="visible", timeout=10000)
                     print("Expected account identity verified.")
                 result = 0
@@ -159,6 +178,7 @@ def auto_login(profile: Path, *, non_interactive=False, session_only=False, expe
 
 def main() -> int:
     parser = argparse.ArgumentParser(description=__doc__)
+    parser.add_argument("--account", help="Local account name; uses .local/accounts/NAME.json and an isolated Chrome profile")
     parser.add_argument("--native-keychain", action="store_true", help="Use native macOS Keychain, matching OpenClaw Chrome")
     parser.add_argument("--non-interactive", action="store_true", help="Close after checking; return nonzero if authentication or identity fails")
     parser.add_argument("--session-only", action="store_true", help="Check saved session without submitting credentials")
@@ -171,8 +191,8 @@ def main() -> int:
     parser.add_argument(
         "--profile-dir",
         type=Path,
-        default=Path.home() / "Library/Application Support/Classroom Chrome",
-        help="Chrome session directory (default: a separate Classroom profile)",
+        default=None,
+        help="Override the account's dedicated Chrome session directory",
     )
     args = parser.parse_args()
     if sys.platform != "darwin":
@@ -197,7 +217,16 @@ def main() -> int:
             )
             return 1
 
-    profile = args.profile_dir.expanduser().resolve()
+    try:
+        credentials_path, default_profile = account_paths(args.account)
+        credentials = load_credentials(credentials_path, args.session_only) if args.auto_login else {}
+        if args.account and args.expected_email and credentials.get("email") and args.expected_email.casefold() != credentials["email"].casefold():
+            raise ValueError("Expected email does not match the selected account's credentials.")
+    except ValueError as error:
+        print(str(error), file=sys.stderr)
+        return 1
+    expected_email = args.expected_email or (credentials.get("email") if args.account else None)
+    profile = (args.profile_dir or default_profile).expanduser().resolve()
     profile.mkdir(parents=True, exist_ok=True, mode=0o700)
     try:
         prepare_profile(profile)
@@ -205,7 +234,7 @@ def main() -> int:
         print(f"Could not prepare Chrome profile: {error}", file=sys.stderr)
         return 1
     if args.auto_login:
-        return auto_login(profile, non_interactive=args.non_interactive, session_only=args.session_only, expected_email=args.expected_email, native_keychain=args.native_keychain)
+        return auto_login(profile, credentials=credentials, non_interactive=args.non_interactive, session_only=args.session_only, expected_email=expected_email, native_keychain=args.native_keychain)
     try:
         # Launch ordinary Chrome so Google sign-in runs in a normal browser.
         subprocess.Popen(

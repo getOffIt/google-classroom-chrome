@@ -31,6 +31,25 @@ To sign out, use Google's account menu in the Classroom browser window.
 
 ## Sign-in options
 
+### Multiple accounts
+
+Give each account a local name, such as `student-a` or `student-b`. Create
+`.local/accounts/student-a.json` from `credentials.example.json` and fill in that
+account's credentials. Run:
+
+```sh
+python3 classroom.py --account student-a
+python3 classroom.py --account student-b --non-interactive
+```
+
+Each named account uses its own Chrome profile under
+`~/Library/Application Support/Classroom Chrome Accounts/NAME` and verifies the
+visible account identity against its credentials. Local account files are ignored
+by Git. Keep one email/password object per file. Do not share a `--profile-dir`
+between accounts. Without `--account`, the legacy `credentials.json` and default
+profile continue to work. `--session-only` can check a saved profile without a
+credentials file; pass `--expected-email` to verify identity in that case.
+
 `--auto-login` is enabled by default and can still be passed explicitly.
 To open Chrome without attempting automatic sign-in:
 
