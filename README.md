@@ -76,24 +76,27 @@ Credentials, browser profiles, virtual environments, screenshots, and diagnostic
 artifacts must stay local. Only the blank credentials example is included.
 This script currently opens Classroom; it does not extract homework or submit work.
 
-## OpenClaw integration
+## Browser automation integration
 
 `--non-interactive` closes the browser after checking and returns a nonzero exit
 code when authentication or account verification fails. `--session-only` avoids
 submitting credentials. `--expected-email` requires a matching visible account
-identity. `--native-keychain` uses the native macOS Keychain rather than
-Playwright's mock Keychain and basic password store.
+identity. `--keychain-mode native` uses the native macOS Keychain rather than
+Playwright's mock Keychain and basic password store. `--keychain-mode automation`
+uses Playwright's default automation settings. Use the same mode in the launcher
+and any other controller sharing the dedicated profile. The legacy
+`--native-keychain` flag remains available.
 
-Stop the dedicated browser profile through OpenClaw before running this script
+Stop the dedicated browser profile through your browser controller before running this script
 against it. Configure the account and profile path locally, for example:
 
 ```sh
-.venv/bin/python classroom.py --non-interactive --native-keychain \
+.venv/bin/python classroom.py --non-interactive --keychain-mode native \
   --expected-email "$CLASSROOM_EMAIL" \
   --profile-dir "$CLASSROOM_PROFILE_DIR"
 ```
 
-Reopen the same dedicated profile in OpenClaw afterward and verify the account
+Reopen the same dedicated profile in your browser controller afterward and verify the account
 and class. Do not run concurrently with other browser tasks. Stop on verification
 or authentication challenges rather than repeatedly retrying sign-in. Add
 `--session-only` to check saved-session reuse without submitting credentials.
@@ -101,3 +104,27 @@ The script does not change homework state.
 
 Keep screenshots from `--diagnose` private; they may contain account and class
 information. They are excluded from Git along with credentials and local artifacts.
+
+### Private profile settings
+
+Keep machine paths and integration-specific configuration in `.local/settings.json`
+(ignored by Git), not in source code or shared documentation. For example:
+
+```json
+{
+  "profile_keychain_modes": {
+    "/absolute/path/to/dedicated/profile": "automation"
+  }
+}
+```
+
+An explicit `--keychain-mode` takes precedence, followed by the private profile
+setting, then `--native-keychain` or the default `automation` mode. The launcher
+does not write controller-specific metadata into Chrome's profile. Configure any
+controller-specific profile settings privately in that controller.
+
+Names, account addresses, machine names, network addresses, and tool choices
+belong in private configuration. Keep reusable operational procedures in your
+private runbook, separate from this checkout; reserve `.local/` for local settings,
+account files, and disposable backups.
+Before publishing, review `git status` and `git diff --cached` for private data.

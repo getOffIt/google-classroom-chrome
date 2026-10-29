@@ -19,3 +19,13 @@ credentials.*
 profiles/
 user-data/
 .local/
+
+# Private editor configuration, hand-off notes, and backup copies.
+.vscode/
+.idea/
+*-HANDOFF.md
+*.before-*
+*.bak
+*.orig
+*.swp
+*~

@@ -94,7 +94,20 @@ def prepare_profile(profile: Path) -> None:
     preferences_path.chmod(0o600)
 
 
-def auto_login(profile: Path, *, credentials=None, non_interactive=False, session_only=False, expected_email=None, native_keychain=False) -> int:
+def resolve_keychain_mode(profile: Path, requested=None, native_keychain=False) -> str:
+    """Resolve explicit, private per-profile, then legacy/default settings."""
+    settings_path = Path(__file__).resolve().parent / ".local" / "settings.json"
+    settings = json.loads(settings_path.read_text()) if settings_path.exists() else {}
+    if not isinstance(settings, dict) or not isinstance(settings.get("profile_keychain_modes", {}), dict):
+        raise ValueError("Local settings must contain a profile_keychain_modes object.")
+    mode = requested or settings.get("profile_keychain_modes", {}).get(str(profile))
+    mode = mode or ("native" if native_keychain else "automation")
+    if mode not in ("native", "automation"):
+        raise ValueError("Keychain mode must be native or automation.")
+    return mode
+
+
+def auto_login(profile: Path, *, credentials=None, non_interactive=False, session_only=False, expected_email=None, chrome: Path, keychain_mode="automation") -> int:
     """Attempt Google's standard email/password flow once, without retries."""
     credentials = credentials or {}
     email, password = credentials.get("email", ""), credentials.get("password", "")
@@ -106,8 +119,8 @@ def auto_login(profile: Path, *, credentials=None, non_interactive=False, sessio
 
     with sync_playwright() as playwright:
         context = playwright.chromium.launch_persistent_context(
-            str(profile), channel="chrome", headless=False, chromium_sandbox=True,
-            ignore_default_args=["--use-mock-keychain", "--password-store=basic"] if native_keychain else None,
+            str(profile), executable_path=str(chrome), headless=False, chromium_sandbox=True,
+            ignore_default_args=["--use-mock-keychain", "--password-store=basic"] if keychain_mode == "native" else None,
         )
         try:
             page = context.pages[0] if context.pages else context.new_page()
@@ -179,7 +192,8 @@ def auto_login(profile: Path, *, credentials=None, non_interactive=False, sessio
 def main() -> int:
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--account", help="Local account name; uses .local/accounts/NAME.json and an isolated Chrome profile")
-    parser.add_argument("--native-keychain", action="store_true", help="Use native macOS Keychain, matching OpenClaw Chrome")
+    parser.add_argument("--keychain-mode", choices=("native", "automation"), help="Select native macOS or automation Keychain settings")
+    parser.add_argument("--native-keychain", action="store_true", help="Use native macOS Keychain unless overridden by local profile settings or --keychain-mode")
     parser.add_argument("--non-interactive", action="store_true", help="Close after checking; return nonzero if authentication or identity fails")
     parser.add_argument("--session-only", action="store_true", help="Check saved session without submitting credentials")
     parser.add_argument("--expected-email", help="Require matching visible Google account identity")
@@ -233,8 +247,13 @@ def main() -> int:
     except (OSError, ValueError) as error:
         print(f"Could not prepare Chrome profile: {error}", file=sys.stderr)
         return 1
+    try:
+        keychain_mode = resolve_keychain_mode(profile, args.keychain_mode, args.native_keychain)
+    except (OSError, ValueError) as error:
+        print(f"Could not load local profile settings: {error}", file=sys.stderr)
+        return 1
     if args.auto_login:
-        return auto_login(profile, credentials=credentials, non_interactive=args.non_interactive, session_only=args.session_only, expected_email=expected_email, native_keychain=args.native_keychain)
+        return auto_login(profile, credentials=credentials, non_interactive=args.non_interactive, session_only=args.session_only, expected_email=expected_email, chrome=chrome, keychain_mode=keychain_mode)
     try:
         # Launch ordinary Chrome so Google sign-in runs in a normal browser.
         subprocess.Popen(
